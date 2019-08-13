@@ -108,7 +108,7 @@ protected:
   std::shared_ptr<T> storage_;
 };
 
-using bytestring = std::string;
+using bytestring = std::string; // typename utils::small_string<>;
 
 inline void to_bytes(bytestring& bytes, const int arg) {
   auto as_cstring = reinterpret_cast<const char*>(&arg);
@@ -139,7 +139,7 @@ inline void to_bytes(bytestring& str, const uint64_t arg) {
 }
 
 template <typename T>
-inline void to_bytes(bytestring& bytes, const std::vector<T> arg) {
+inline void to_bytes(bytestring& bytes, std::vector<T>& arg) {
   if (arg.size() > 0) {
     for (T elems : arg) {
       to_bytes(bytes, elems);
@@ -151,12 +151,27 @@ inline void to_bytes(bytestring& bytes, const std::vector<T> arg) {
   }
 }
 
-template <typename T, typename = typename std::enable_if<std::is_enum<T>::value>::type>
+template <typename T>
+inline void to_bytes(bytestring& bytes, const std::vector<T>& arg) {
+  // remove constness, then jumps to `to_bytes(bytestring&, vector<T>&)`
+  to_bytes(bytes, const_cast<std::vector<T>&>(arg));
+}
+
+template <typename T>
+inline void to_bytes(bytestring& bytes, std::vector<T>&& arg) {
+  // `arg` is an lval ref now, then jumps to `to_bytes(bytestring&, vector<T>&)`
+  to_bytes(bytes, arg);
+}
+
+template <typename T,
+          typename = typename std::enable_if<std::is_enum<T>::value>::type>
 inline void to_bytes(bytestring& bytes, T arg) {
   to_bytes(bytes, static_cast<int>(arg));
 }
 
-template <typename T, typename = typename std::enable_if<std::is_class<T>::value>::type, typename = void>
+template <typename T,
+          typename = typename std::enable_if<std::is_class<T>::value>::type,
+          typename = void>
 inline void to_bytes(bytestring& bytes, const T arg) {
   arg.to_bytes(bytes);
 }

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <mkldnn.h>
 #include <mkldnn.hpp>
+#include "small_string.hpp"
 
 namespace ideep {
 
@@ -76,7 +77,7 @@ public:
   }
 };
 
-using key_t = std::string;
+using key_t = std::string; // typename utils::small_string<>;
 using scale_t = std::vector<float>;
 
 using query = mkldnn::query;

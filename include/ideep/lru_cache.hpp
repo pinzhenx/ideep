@@ -141,7 +141,9 @@ private:
   size_type capacity_;
 };
 
-template <class value_t, size_t capacity = 1024, class key_t = std::string>
+template <class value_t, size_t capacity = 1024,
+          class key_t = std::string>
+          // class key_t = utils::small_string<>>
 class computation_cache {
 public:
   using iterator = typename lru_cache<key_t, value_t>::iterator;
