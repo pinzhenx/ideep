@@ -179,7 +179,7 @@ public:
       const float* c_scales;
       error::wrap_c_api(mkldnn_primitive_attr_get_output_scales(get(), &count, &c_mask, &c_scales),
           "could not get int output scales");
-      return std::make_pair(scale_t(c_scales, c_scales + count), c_mask);
+      return std::make_pair(std::move(scale_t(c_scales, c_scales + count)), c_mask);
     }
 
     void set_output_scales(int mask, const scale_t& scales) {
@@ -204,9 +204,6 @@ public:
 
     void to_bytes(utils::bytestring& bytes) const {
       get_post_ops().to_bytes(bytes);
-      auto scales = get_output_scales();
-      utils::to_bytes(bytes, scales.first);
-      utils::to_bytes(bytes, scales.second);
     }
 
   public:
@@ -297,6 +294,19 @@ public:
       return mkldnn_primitive_desc_query_s32(get(),
          mkldnn::convert_to_c(mkldnn::num_of_outputs_s32), 0);
   }
+
+  attr_t get_primitive_attr() const {
+    const_mkldnn_primitive_attr_t const_cattr;
+    error::wrap_c_api(mkldnn_primitive_desc_get_attr(get(), &const_cattr),
+        "could not get attributes");
+    mkldnn_primitive_attr_t cattr;
+    error::wrap_c_api(mkldnn_primitive_attr_clone(&cattr, const_cattr),
+        "could not clone attributes");
+
+    attr_t attr;
+    attr.reset(cattr);
+    return attr;
+  }
 };
 
 /// A group of primitives, pack related reorder with computation.
@@ -312,6 +322,9 @@ public:
         "could not get primitive descriptor from a memory primitive");
     return cdesc;
   }
+
+  /// Returns the descriptor of the memory primitive.
+  descriptor_group get_primitive_desc() const;
 
   /// Query interface
   const_mkldnn_primitive_desc_t expected_descriptor_of(query q, int index = 0) const {
@@ -363,10 +376,10 @@ protected:
     mkldnn_primitive_t c_api_error_primitive;
 
     execution_sequence.push_back(get());
-    error::wrap_c_api(mkldnn_stream_submit(
-          parallel_control.get(), execution_sequence.size(),
-          &execution_sequence[0], &c_api_error_primitive),
-        "could not execute the computation");
+    // error::wrap_c_api(mkldnn_stream_submit(
+    //       parallel_control.get(), execution_sequence.size(),
+    //       &execution_sequence[0], &c_api_error_primitive),
+    //     "could not execute the computation");
   }
 };
 

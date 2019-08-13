@@ -320,6 +320,8 @@ struct convolution_forward: public computation,
   public utils::computation_cache<convolution_forward> {
   /// Descriptor class for describing convolution forward process
   struct descriptor : public descriptor_group {
+    descriptor() {}
+
     descriptor(const tdesc_t& src_desc, const tdesc_t& weights_desc, const tdesc_t& bias_desc,
         const tdesc_t& dst_desc, const tdims_t& strides, const tdims_t& dilates,
         const tdims_t& padding_l, const tdims_t& padding_r, const attr_t& attr = attr_t(),
@@ -417,11 +419,11 @@ struct convolution_forward: public computation,
       scale_t op_scales(scale_size), bias_scales(scale_size);
       dst_scales_in = (dst_scales.empty() || dst_data_type == tdtype_t::f32)
         ? IDEEP_DEF_SCALE : dst_scales;
-      for (int i = 0; i < scale_size; i++) {
-        bias_scales[i] = src_scales_in[0] * weights_scales_in[i];
-        op_scales[i] = dst_scales_in[0] / bias_scales[i];
-      }
-      op_attr.set_output_scales(IDEEP_OP_SCALE_MASK(scale_size), op_scales);
+      // for (int i = 0; i < scale_size; i++) {
+      //   bias_scales[i] = src_scales_in[0] * weights_scales_in[i];
+      //   op_scales[i] = dst_scales_in[0] / bias_scales[i];
+      // }
+      // op_attr.set_output_scales(IDEEP_OP_SCALE_MASK(scale_size), op_scales);
       op_attr.set_int_output_round_mode(round_mode::round_nearest);
 
       if (post_ops.has_op_kind(kind::sum)) {
@@ -478,6 +480,11 @@ struct convolution_forward: public computation,
         op_attr, src_scales, dst_scales, args...);
     fetch_or_create_m(comp, key, src_desc, weights_desc, bias_desc, dst_desc_in, strides, dilates,
             padding_l, padding_r, op_attr, std::forward<Ts>(args)...);
+
+    // override output_scales of cached `comp`
+    // auto comp_attr = comp.get_primitive_desc().get_primitive_attr();
+    // auto op_scales = op_attr.get_output_scales();
+    // comp_attr.set_output_scales(op_scales.second, op_scales.first);
 
     auto src_in = comp.transform_input_cache<alloc>(0, src, src_attr);
     auto weights_in = comp.transform_input_cache(1, weights.as_weights(), weights_attr);
@@ -606,6 +613,16 @@ struct convolution_forward: public computation,
     static tensor dummy_bias;
     compute<alloc, false>(src, weights, dummy_bias, result_dims, dst, strides, dilates,
         padding_l, padding_r, group, attr, aalgorithm, aprop_kind, appading_kind);
+  }
+
+  descriptor get_primitive_desc() const {
+    descriptor adesc;
+    const_mkldnn_primitive_desc_t cdesc;
+    error::wrap_c_api(mkldnn_primitive_get_primitive_desc(get(), &cdesc),
+        "could not get primitive descriptor from a memory primitive");
+    /* FIXME: no const_cast should be here */
+    adesc.reset(const_cast<mkldnn_primitive_desc_t>(cdesc), true);
+    return adesc;
   }
 
   static tdesc_t expected_weights_descriptor(const tdims_t& weights_dims,
@@ -2095,6 +2112,8 @@ private:
 struct inner_product_forward: public computation,
   public utils::computation_cache<inner_product_forward> {
   struct descriptor: public descriptor_group {
+    descriptor() {}
+
     descriptor(const tdesc_t& src_desc, const tdesc_t& weights_desc, const tdesc_t& bias_desc,
         const tdesc_t& dst_desc, const attr_t& attr = attr_t(),
         prop_kind aprop_kind = prop_kind::forward) {
@@ -2191,11 +2210,11 @@ struct inner_product_forward: public computation,
       // fill primitive attr
       scale_t op_scales(scale_size), bias_scales(scale_size);
       dst_scales_in = (dst_scales.empty() || dst_data_type == tdtype_t::f32) ? IDEEP_DEF_SCALE : dst_scales;
-      for (int i = 0; i < scale_size; i++) {
-        bias_scales[i] = src_scales_in[0] * weights_scales_in[i];
-        op_scales[i] = dst_scales_in[0] / bias_scales[i];
-      }
-      op_attr.set_output_scales(IDEEP_OP_SCALE_MASK(scale_size), op_scales);
+      // for (int i = 0; i < scale_size; i++) {
+      //   bias_scales[i] = src_scales_in[0] * weights_scales_in[i];
+      //   op_scales[i] = dst_scales_in[0] / bias_scales[i];
+      // }
+      // op_attr.set_output_scales(IDEEP_OP_SCALE_MASK(scale_size), op_scales);
       op_attr.set_int_output_round_mode(round_mode::round_nearest);
 
       if (with_bias) {
@@ -2227,6 +2246,11 @@ struct inner_product_forward: public computation,
     check_or_create_k(key, src, weights, with_bias, op_attr, src_scales, dst_scales, args...);
     fetch_or_create_m(comp, key, src_desc, weights_desc, bias_desc, dst_desc_in, op_attr,
         std::forward<Ts>(args)...);
+
+    // override output_scales of cached `comp`
+    // auto comp_attr = comp.get_primitive_desc().get_primitive_attr();
+    // auto op_scales = op_attr.get_output_scales();
+    // comp_attr.set_output_scales(op_scales.second, op_scales.first);
 
     auto src_in = comp.transform_input_cache<alloc>(0, src, src_attr);
     auto weights_in = comp.transform_input_cache<alloc>(1, weights.as_weights(), weights_attr);
@@ -2313,6 +2337,16 @@ struct inner_product_forward: public computation,
       const attr_t& attr = attr_t(), prop_kind aprop_kind = prop_kind::forward, const lowp_kind alowp_kind = LOWP_U8S8) {
     static tensor dummy_bias;
     compute<alloc, false>(src, weights, dummy_bias, dst, src_scales, weights_scales, dst_scales, attr, aprop_kind, alowp_kind);
+  }
+
+  descriptor get_primitive_desc() const {
+    descriptor adesc;
+    const_mkldnn_primitive_desc_t cdesc;
+    error::wrap_c_api(mkldnn_primitive_get_primitive_desc(get(), &cdesc),
+        "could not get primitive descriptor from a memory primitive");
+    /* FIXME: no const_cast should be here */
+    adesc.reset(const_cast<mkldnn_primitive_desc_t>(cdesc), true);
+    return adesc;
   }
 
   static tdesc_t expected_weights_descriptor(const tdims_t& weights_dims, tdtype_t dtype = tdtype_t::f32,
