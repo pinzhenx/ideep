@@ -3,6 +3,8 @@
 
 namespace ideep {
 
+static int ideep_cache_conv = -1;
+
 struct convolution_forward : public dnnl::convolution_forward,
                              utils::computation_cache<dnnl::primitive> {
   using super = dnnl::convolution_forward;
@@ -26,9 +28,8 @@ struct convolution_forward : public dnnl::convolution_forward,
                       const lowp_kind alowp_kind = u8s8,
                       const engine& aengine = engine::cpu_engine()) {
     compute_impl</*with_bias=*/true>(
-        src, weights, bias, dst_dims, dst, strides, dilates, padding_l,
-        padding_r, groups, src_scales, weights_scales, dst_scales, attr,
-        aalgorithm, aprop_kind, alowp_kind, aengine);
+        src, weights, bias, dst_dims, dst, strides, dilates,
+        padding_l, padding_r, groups, attr, aalgorithm, aprop_kind, aengine);
   }
 
   static void compute(const tensor& src,
@@ -50,11 +51,11 @@ struct convolution_forward : public dnnl::convolution_forward,
                       const engine& aengine = engine::cpu_engine()) {
     static tensor dummy_bias;
     compute_impl</*with_bias=*/false>(
-        src, weights, dummy_bias, dst_dims, dst, strides, dilates, padding_l,
-        padding_r, groups, src_scales, weights_scales, dst_scales, attr,
-        aalgorithm, aprop_kind, alowp_kind, aengine);
+        src, weights, dummy_bias, dst_dims, dst, strides, dilates,
+        padding_l, padding_r, groups, attr, aalgorithm, aprop_kind, aengine);
   }
 
+  // TODO: XPZ: refactor it
   static tensor::desc expected_weights_desc(
       const dims& weights_dims,
       data_type dtype = data_type::f32,
@@ -172,164 +173,83 @@ private:
                            const dims& padding_l,
                            const dims& padding_r,
                            int groups,
-                           const scale_t& src_scales,
-                           const scale_t& weights_scales,
-                           const scale_t& dst_scales,
                            const attr_t& attr,
                            algorithm aalgorithm,
                            prop_kind aprop_kind,
-                           const lowp_kind alowp_kind,
                            const engine& aengine) {
-    attr_t op_attr, src_attr, weights_attr, bias_attr;
 
     // make weights and dilates compatible with DNNL
     auto weights_ = weights.make_grouped_weights(groups);
     auto dilates_ = utils::get_compatible_dilates(dilates);
 
-    auto& weights_scales_in =
-        weights_.has_scale() ? weights_.get_scale() : weights_scales;
-
-    auto& src_scales_in =
-        src.has_scale() ? src.get_scale()
-                        : src_scales.empty() ? IDEEP_DEF_SCALE : src_scales;
+    auto dst_desc = attr.has_op_kind(kind::sum)
+                        ? dst.get_desc()
+                        : tensor::desc(dst_dims, src.get_data_type());
 
     auto src_desc = src.get_desc();
     auto weights_desc = weights_.get_desc();
     auto bias_desc = bias.get_desc();
 
-    auto key = utils::create_key(src_desc, weights_desc, with_bias, strides,
-                                 dilates_, padding_l, padding_r, attr,
-                                 aalgorithm, aprop_kind, alowp_kind,
-                                 utils::get_vec_hash(src_scales_in),
-                                 utils::get_vec_hash(weights_scales_in),
-                                 utils::get_vec_hash(dst_scales));
+    if (ideep_cache_conv < 0) {
+      ideep_cache_conv = atoi(std::getenv("IDEEP_CACHE_CONV")) > 0 ? 1 : 0;
+      std::cout << (ideep_cache_conv ? "ideep" : "dnnl") << " caches conv\n";
+    }
 
-    auto comp = fetch_or_create(key, [&]() {
+    if (ideep_cache_conv) {
+      auto key = utils::create_key(src_desc, weights_desc, with_bias, strides,
+                                 dilates_, padding_l, padding_r, attr);
+      auto comp = fetch_or_create(key, [&]() {
+        auto pd = get_primitive_desc<with_bias>(
+            src_desc, weights_desc, bias_desc, dst_desc, strides, dilates_,
+            padding_l, padding_r, attr, aalgorithm, aprop_kind, aengine);
+        return super(pd);
+      });
+      auto pd = conv_pd_wrapper(comp);
 
-      // TOOD: refactor following code if we redesign the whole INT8 interface
-      auto dst_data_type = data_type::f32;
-      if (!weights_scales_in.empty()) {
-        IDEEP_ENFORCE(alowp_kind == u8s8 || alowp_kind == s8s8,
-                      "Unsupported lowp kind");
-        int scale_size = (weights_scales_in.size() > 1) ? dst_dims[1] : 1;
+      auto expected_src = src.reorder_if_differ_in(pd.src_desc());
+      auto expected_weights = weights_.reorder_if_differ_in(pd.weights_desc());
+      dst.reinit_if_possible(pd.dst_desc());
 
-        // determine dst data type
-        if (attr.has_op_kind(kind::sum)) {
-          dst_data_type = dst.get_data_type();
-        } else if (dst_scales.empty() || dst_scales == IDEEP_DEF_SCALE) {
-          dst_data_type = data_type::f32;
-        } else if (attr.non_negitive_output()) {
-          dst_data_type = data_type::u8;
-        } else {
-          dst_data_type = data_type::s8;
-        }
-
-        // fill primitive attr
-        scale_t op_scales(scale_size), bias_scales(scale_size);
-        auto dst_scales_in =
-            dst_scales.empty() || dst_data_type == data_type::f32
-                ? IDEEP_DEF_SCALE
-                : dst_scales;
-        for (int i = 0; i < scale_size; i++) {
-          bias_scales[i] = src_scales_in[0] * weights_scales_in[i];
-          op_scales[i] = dst_scales_in[0] / bias_scales[i];
-        }
-
-        if (attr.has_op_kind(kind::sum)) {
-          float sum_scale =
-              dst_scales_in[0] / (dst.has_scale() ? dst.get_scale()[0] : 1.0f);
-          if (attr.has_op_kind(kind::eltwise)) {
-            op_attr = attr_t::residual(sum_scale);
-          } else {
-            op_attr = attr_t::fuse_sum(sum_scale);
-          }
-        } else if (attr.has_op_kind(kind::eltwise)) {
-          op_attr = attr_t::fuse_relu();
-        }
-        op_attr.set_output_scales(utils::op_scale_mask(scale_size), op_scales);
-
-        src_desc = {src.get_dims(),
-                    alowp_kind == u8s8 ? data_type::u8 : data_type::s8};
-        if (src.get_data_type() == data_type::f32) {
-          src_attr = {0, src_scales_in};
-        }
-
-        weights_desc = weights_.get_desc().to_type(data_type::s8);
-        if (weights_.get_data_type() == data_type::f32) {
-          weights_attr = {utils::tensor_scale_mask(scale_size, groups > 1),
-                          weights_scales_in};
-        }
-
-        if (with_bias) {
-          bias_desc = {bias.get_dims(), data_type::s32};
-          if (bias.get_data_type() == data_type::f32) {
-            bias_attr = {utils::tensor_scale_mask(scale_size, false),
-                        bias_scales};
-          }
-        }
+      if (with_bias) {
+        auto expected_bias = bias.reorder_if_differ_in(pd.bias_desc());
+        comp.execute(stream::default_stream(), 
+                     {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_WEIGHTS, expected_weights},
+                      {DNNL_ARG_BIAS, expected_bias},
+                      {DNNL_ARG_DST, dst}});
       } else {
-        op_attr = attr;
-
-        src_desc = {src.get_dims(), data_type::f32};
-        if (src.has_scale()) {
-          auto src_scale = src.get_scale();
-          src_scale[0] = 1.0f / src_scale[0];
-          src_attr = {0, src_scale};
-        }
-
-        weights_desc = weights_.get_desc();
-        IDEEP_ENFORCE(weights_.get_data_type() == data_type::f32,
-                      "Incorrect data type in weights");
-
-        if (with_bias) {
-          IDEEP_ENFORCE(bias.get_data_type() == data_type::f32,
-                        "Incorrect data type in bias");
-          bias_desc = bias.get_desc();
-        }
+        comp.execute(stream::default_stream(), 
+                     {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_WEIGHTS, expected_weights},
+                      {DNNL_ARG_DST, dst}});
       }
+    }
 
-      auto dst_desc = attr.has_op_kind(kind::sum)
-                          ? dst.get_desc()
-                          : tensor::desc(dst_dims, dst_data_type);
-
+    // dnnl cache conv
+    else {
       auto pd = get_primitive_desc<with_bias>(
           src_desc, weights_desc, bias_desc, dst_desc, strides, dilates_,
-          padding_l, padding_r, op_attr, aalgorithm, aprop_kind, aengine);
-      return super(pd);
-    });
-    auto pd = conv_pd_wrapper(comp);
+          padding_l, padding_r, attr, aalgorithm, aprop_kind, aengine);
+      auto comp = super(pd);
 
-    // auto pd = get_primitive_desc<with_bias>(
-    //     src_desc, weights_desc, bias_desc, dst_desc, strides, dilates_,
-    //     padding_l, padding_r, op_attr, aalgorithm, aprop_kind, aengine);
-    // auto comp = super(pd);
+      auto expected_src = src.reorder_if_differ_in(pd.src_desc());
+      auto expected_weights = weights_.reorder_if_differ_in(pd.weights_desc());
+      dst.reinit_if_possible(pd.dst_desc());
 
-    auto expected_src = src.reorder_if_differ_in(pd.src_desc(), src_attr);
-    auto expected_weights = weights_.reorder_if_differ_in(pd.weights_desc(), weights_attr);
-    dst.reinit_if_possible(pd.dst_desc());
-
-    if (!dst_scales.empty() && dst.get_data_type() != data_type::f32) {
-      dst.set_scale(dst_scales);
+      if (with_bias) {
+        auto expected_bias = bias.reorder_if_differ_in(pd.bias_desc());
+        comp.execute(stream::default_stream(), 
+                     {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_WEIGHTS, expected_weights},
+                      {DNNL_ARG_BIAS, expected_bias},
+                      {DNNL_ARG_DST, dst}});
+      } else {
+        comp.execute(stream::default_stream(), 
+                     {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_WEIGHTS, expected_weights},
+                      {DNNL_ARG_DST, dst}});
+      }
     }
-
-    if (with_bias) {
-      auto expected_bias = bias.reorder_if_differ_in(pd.bias_desc(), bias_attr);
-      comp.execute(stream::default_stream(), 
-                   {{DNNL_ARG_SRC, expected_src},
-                    {DNNL_ARG_WEIGHTS, expected_weights},
-                    {DNNL_ARG_BIAS, expected_bias},
-                    {DNNL_ARG_DST, dst}});
-    } else {
-      comp.execute(stream::default_stream(), 
-                   {{DNNL_ARG_SRC, expected_src},
-                    {DNNL_ARG_WEIGHTS, expected_weights},
-                    {DNNL_ARG_DST, dst}});
-    }
-
-    // xpz: ???
-    // if (attr.non_negitive_output() && dst.get_data_type() == data_type::s8) {
-    //   dst.to_type(data_type::u8);
-    // }
   }
 };
 
