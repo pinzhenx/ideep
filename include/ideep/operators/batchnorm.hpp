@@ -4,8 +4,11 @@
 
 namespace ideep {
 
+static int ideep_cache_bn = -1;
+
 struct batch_normalization_forward_inference
-    : public dnnl::batch_normalization_forward {
+    : public dnnl::batch_normalization_forward,
+      utils::computation_cache<dnnl::primitive> {
 
   using super = dnnl::batch_normalization_forward;
 
@@ -49,31 +52,74 @@ struct batch_normalization_forward_inference
     auto src_desc = src._get_unblocked_desc_if_4c_blocked();
     // auto src_desc = src.get_desc();
 
-    auto pd = primitive_desc(
-        {prop_kind::forward_inference, src_desc, epsilon, flags}, aengine);
 
-    tensor scale_shift {pd.weights_desc()};
-    std::memcpy(scale_shift.get_data_handle(),
-                scale.get_data_handle(), scale.get_size());
-    std::memcpy(scale_shift.get_data_handle() + scale.get_size(),
-                shift.get_data_handle(), shift.get_size());
-    auto expected_src = src.reorder_if_differ_in(pd.src_desc());
-    dst.reinit_if_possible(pd.dst_desc());
+    if (ideep_cache_bn < 0) {
+      ideep_cache_bn = atoi(std::getenv("IDEEP_CACHE_BN")) > 0 ? 1 : 0;
+      std::cout << (ideep_cache_bn ? "ideep" : "dnnl") << " caches bn\n";
+    }
 
-    if (use_stats) {
-      auto expected_mean = mean.reorder_if_differ_in(pd.mean_desc());
-      auto expected_var = variance.reorder_if_differ_in(pd.variance_desc());
-      super(pd).execute(stream::default_stream(),
-                        {{DNNL_ARG_SRC, expected_src},
-                         {DNNL_ARG_SCALE_SHIFT, scale_shift},
-                         {DNNL_ARG_VARIANCE, expected_var},
-                         {DNNL_ARG_MEAN, expected_mean},
-                         {DNNL_ARG_DST, dst}});
+
+    if (ideep_cache_bn) {
+      auto key = utils::create_key(prop_kind::forward_inference, src_desc,
+                                 epsilon, flags);
+      auto comp = fetch_or_create(key, [&]() {
+        auto pd = primitive_desc(
+          {prop_kind::forward_inference, src_desc, epsilon, flags}, aengine);
+        return super(pd);
+      });
+      auto pd = bn_fwd_pd_wrapper(comp);
+
+      tensor scale_shift {pd.weights_desc()};
+      std::memcpy(scale_shift.get_data_handle(),
+                  scale.get_data_handle(), scale.get_size());
+      std::memcpy(scale_shift.get_data_handle() + scale.get_size(),
+                  shift.get_data_handle(), shift.get_size());
+      auto expected_src = src.reorder_if_differ_in(pd.src_desc());
+      dst.reinit_if_possible(pd.dst_desc());
+
+      if (use_stats) {
+        auto expected_mean = mean.reorder_if_differ_in(pd.mean_desc());
+        auto expected_var = variance.reorder_if_differ_in(pd.variance_desc());
+        comp.execute(stream::default_stream(),
+                    {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_SCALE_SHIFT, scale_shift},
+                      {DNNL_ARG_VARIANCE, expected_var},
+                      {DNNL_ARG_MEAN, expected_mean},
+                      {DNNL_ARG_DST, dst}});
+      } else {
+        comp.execute(stream::default_stream(),
+                    {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_SCALE_SHIFT, scale_shift},
+                      {DNNL_ARG_DST, dst}});
+      }
     } else {
-      super(pd).execute(stream::default_stream(),
-                        {{DNNL_ARG_SRC, expected_src},
-                         {DNNL_ARG_SCALE_SHIFT, scale_shift},
-                         {DNNL_ARG_DST, dst}});
+      auto pd = primitive_desc(
+          {prop_kind::forward_inference, src_desc, epsilon, flags}, aengine);
+      auto comp = super(pd);
+
+      tensor scale_shift {pd.weights_desc()};
+      std::memcpy(scale_shift.get_data_handle(),
+                  scale.get_data_handle(), scale.get_size());
+      std::memcpy(scale_shift.get_data_handle() + scale.get_size(),
+                  shift.get_data_handle(), shift.get_size());
+      auto expected_src = src.reorder_if_differ_in(pd.src_desc());
+      dst.reinit_if_possible(pd.dst_desc());
+
+      if (use_stats) {
+        auto expected_mean = mean.reorder_if_differ_in(pd.mean_desc());
+        auto expected_var = variance.reorder_if_differ_in(pd.variance_desc());
+        comp.execute(stream::default_stream(),
+                    {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_SCALE_SHIFT, scale_shift},
+                      {DNNL_ARG_VARIANCE, expected_var},
+                      {DNNL_ARG_MEAN, expected_mean},
+                      {DNNL_ARG_DST, dst}});
+      } else {
+        comp.execute(stream::default_stream(),
+                    {{DNNL_ARG_SRC, expected_src},
+                      {DNNL_ARG_SCALE_SHIFT, scale_shift},
+                      {DNNL_ARG_DST, dst}});
+      }
     }
   }
 };
