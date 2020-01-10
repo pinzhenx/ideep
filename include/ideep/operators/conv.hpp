@@ -3,6 +3,8 @@
 
 namespace ideep {
 
+static int pseudo_runtime_scales = -1;
+
 struct convolution_forward_params {
   dnnl::convolution_forward::primitive_desc pd;
   // bias_attr contains requantization scales for bias
@@ -275,6 +277,16 @@ private:
     tensor::desc src_desc, weights_desc, bias_desc;
     attr_t op_attr, src_attr, weights_attr, bias_attr;
 
+    if (pseudo_runtime_scales < 0) {
+      char *pseudo_runtime_scales_env = std::getenv("PSEUDO_RUNTIME_SCALES");
+      if (pseudo_runtime_scales_env) {
+        pseudo_runtime_scales = atoi(pseudo_runtime_scales_env) > 0 ? 1 : 0;
+        if (pseudo_runtime_scales) {
+          std::cout << "No scales in conv pd\n";
+        }
+      }
+    }
+
     // make weights and dilates compatible with DNNL
     auto weights_ = weights.make_grouped_weights(groups);
     auto dilates_ = utils::get_compatible_dilates(dilates);
@@ -320,7 +332,8 @@ private:
       } else if (attr.has_op_kind(kind::eltwise)) {
         op_attr = attr_t::fuse_relu();
       }
-      op_attr.set_output_scales(utils::op_scale_mask(scale_size), op_scales);
+      if (pseudo_runtime_scales != 1)
+        op_attr.set_output_scales(utils::op_scale_mask(scale_size), op_scales);
 
       src_desc = {src.get_dims(),
                   alowp_kind == u8s8 ? data_type::u8 : data_type::s8, tag::any};
