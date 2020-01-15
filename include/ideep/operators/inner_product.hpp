@@ -169,7 +169,7 @@ private:
         src_scale[0] = 1.f / src_scale[0];
         src_attr = {0, src_scale};
       }
-      weights_desc = weights.get_desc().to_format_any();
+      weights_desc = weights.get_desc();
       IDEEP_ENFORCE(weights.get_data_type() == data_type::f32,
                     "Incorrect data type in weights");
       if (with_bias) {
@@ -233,7 +233,7 @@ struct inner_product_backward_data : public dnnl::inner_product_backward_data {
     }
 
     auto diff_dst_desc = diff_dst.get_desc().to_format_any();
-    auto weights_desc = weights_.get_desc().to_format_any();
+    auto weights_desc = weights_.get_desc();
     auto diff_src_desc =
         tensor::desc(diff_src_dims, diff_dst.get_data_type(), tag::any);
 
