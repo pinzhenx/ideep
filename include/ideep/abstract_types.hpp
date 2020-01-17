@@ -81,14 +81,14 @@ struct engine : public dnnl::engine {
         malloc(utils::allocator::malloc),
         free(utils::allocator::free) {}
 
-  void set_allocator(const std::function<void*(int)>& malloc,
+  void set_allocator(const std::function<void*(size_t)>& malloc,
                      const std::function<void(void*)>& free) {
     this->malloc = malloc;
     this->free = free;
   }
 
  private:
-  std::function<void*(int)> malloc;
+  std::function<void*(size_t)> malloc;
   std::function<void(void*)> free;
 };
 

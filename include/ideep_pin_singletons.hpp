@@ -17,7 +17,7 @@ engine& engine::gpu_engine() {
 
 struct RegisterEngineAllocator {
   RegisterEngineAllocator(engine& eng,
-                          const std::function<void*(int)>& malloc,
+                          const std::function<void*(size_t)>& malloc,
                           const std::function<void(void*)>& free) {
     eng.set_allocator(malloc, free);
   }
