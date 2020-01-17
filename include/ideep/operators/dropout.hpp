@@ -43,7 +43,11 @@ struct dropout_forward {
     const auto mask_data = static_cast<T*>(mask.get_data_handle());
     const auto dst_data = static_cast<T*>(dst.get_data_handle());
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static)
+#if (_OPENMP >= 201307)
+# pragma omp parallel for simd
+#else
+# pragma omp parallel for schedule(static)
+#endif
 #endif
     for (size_t i = 0; i < size; i++) {
       mask_data[i] = bernouli_nums[i] * scale;
