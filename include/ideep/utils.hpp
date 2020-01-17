@@ -128,9 +128,9 @@ template <typename T, typename U, typename F>
 inline void simultaneous_sort(T *vals, U *keys, size_t size, F comparator) {
   if (size == 0) return;
 
-  for (size_t i = 0; i < size - 1; ++i) {
+  for (auto i = 0; i < size - 1; ++i) {
     bool swapped = false;
-    for (size_t j = 0; j < size - i - 1; j++) {
+    for (auto j = 0; j < size - i - 1; j++) {
       if (comparator(vals[j], vals[j + 1]) > 0) {
         std::swap(vals[j], vals[j + 1]);
         if (keys) std::swap(keys[j], keys[j + 1]);
@@ -169,20 +169,20 @@ inline bool is_aligned_ptr(void *ptr, size_t bytes) {
 
 template <typename T>
 inline void array_copy(T *dst, const T *src, size_t size) {
-  for (size_t i = 0; i < size; ++i)
+  for (auto i = 0; i < size; ++i)
     dst[i] = src[i];
 }
 
 template <typename T>
 inline bool array_cmp(const T *a1, const T *a2, size_t size) {
-  for (size_t i = 0; i < size; ++i)
+  for (auto i = 0; i < size; ++i)
     if (a1[i] != a2[i]) return false;
   return true;
 }
 
 template <typename T, typename U>
 inline void array_set(T *arr, const U &val, size_t size) {
-  for (size_t i = 0; i < size; ++i)
+  for (auto i = 0; i < size; ++i)
     arr[i] = static_cast<T>(val);
 }
 

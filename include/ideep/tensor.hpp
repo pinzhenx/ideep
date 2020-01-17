@@ -295,7 +295,7 @@ class tensor : public memory {
       auto& blk = blocking_desc();
 
       dims_t blocks;
-      for (size_t i = 0; i < data.ndims; i++)
+      for (auto i = 0; i < data.ndims; i++)
         blocks[i] = 1;
 
       dim_t block_size = 1;
@@ -315,7 +315,7 @@ class tensor : public memory {
       auto &mblk = md.format_desc.blocking;
       mblk = blk;
 
-      for (size_t i = 0; i < data.ndims; i++)
+      for (auto i = 0; i < data.ndims; i++)
         mblk.strides[i] = blk.strides[i];
 
       int perm[DNNL_MAX_NDIMS];

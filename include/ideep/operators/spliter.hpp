@@ -14,7 +14,7 @@ struct spliter {
     tensor::dims offset_dims(output_dims.size(), 0);
     IDEEP_ENFORCE(axis < input.ndims(), "invalid axis in split");
 
-    for (size_t i = 0; i < axis_info.size(); ++i) {
+    for (auto i = 0; i < axis_info.size(); ++i) {
       output_dims[axis] = axis_info[i];
       auto output = input.extract_submemory(output_dims, offset_dims);
 

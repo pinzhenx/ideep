@@ -49,7 +49,7 @@ struct dropout_forward {
 # pragma omp parallel for schedule(static)
 #endif
 #endif
-    for (size_t i = 0; i < size; i++) {
+    for (auto i = 0; i < size; i++) {
       mask_data[i] = bernouli_nums[i] * scale;
       dst_data[i] = mask_data[i] * src_data[i];
     }
@@ -90,7 +90,7 @@ struct dropout_backward {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
-    for (size_t i = 0; i < size; i++) {
+    for (auto i = 0; i < size; i++) {
       diff_src_data[i] = mask_data[i] * diff_dst_data[i];
     }
   }
