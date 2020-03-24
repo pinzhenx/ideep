@@ -3,7 +3,8 @@
 
 namespace ideep {
 
-struct pooling_forward : public dnnl::pooling_forward {
+struct pooling_forward : public dnnl::pooling_forward,
+                         utils::computation_cache<dnnl::pooling_forward> {
 
   using super = dnnl::pooling_forward;
 
@@ -26,9 +27,14 @@ struct pooling_forward : public dnnl::pooling_forward {
 
     tensor::desc dst_desc(output_sizes, src.get_data_type(), tag::any);
 
-    auto pd = primitive_desc(
-        {aprop_kind, aalgorithm, src_desc, dst_desc, strides, kernel, padding_l,
-         padding_r}, aengine);
+    auto key = utils::create_key(aprop_kind, aalgorithm, src_desc, dst_desc,
+                                 strides, kernel, padding_l, padding_r);
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd = primitive_desc({aprop_kind, aalgorithm, src_desc, dst_desc,
+                                strides, kernel, padding_l, padding_r}, aengine);
+      return super(pd);
+    });
+    auto pd = utils::get_pd(comp);
 
     auto expected_src = src.reorder_if_differ_in(pd.src_desc());
     dst.reinit_if_possible(pd.dst_desc());
@@ -42,7 +48,7 @@ struct pooling_forward : public dnnl::pooling_forward {
       args.insert({DNNL_ARG_WORKSPACE, dst.get_workspace()});
     }
 
-    super(pd).execute(stream::default_stream(), args);
+    comp.execute(stream::default_stream(), args);
   }
 };
 

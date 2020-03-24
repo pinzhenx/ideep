@@ -4,7 +4,7 @@
 namespace ideep {
 
 struct convolution_forward_params {
-  dnnl::convolution_forward::primitive_desc pd;
+  dnnl::convolution_forward comp;
   // bias_attr contains requantization scales for bias
   attr_t bias_attr;
   scale_t dst_scales;
@@ -12,7 +12,9 @@ struct convolution_forward_params {
   tensor scratchpad;
 };
 
-struct convolution_forward : public dnnl::convolution_forward {
+struct convolution_forward :
+    public dnnl::convolution_forward,
+    utils::computation_cache<dnnl::convolution_forward> {
 
   using super = dnnl::convolution_forward;
 
@@ -375,21 +377,29 @@ private:
                         ? dst.get_desc()
                         : tensor::desc(dst_dims, dst_data_type);
 
-    auto pd = get_primitive_desc<with_bias>(
-        src_desc, weights_desc, bias_desc, dst_desc, strides, dilates_,
-        padding_l, padding_r, op_attr, aalgorithm, aprop_kind, aengine);
+    auto key = utils::create_key(src_desc, weights_desc, with_bias, strides,
+                                dilates_, padding_l, padding_r, attr);
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd = get_primitive_desc<with_bias>(
+          src_desc, weights_desc, bias_desc, dst_desc, strides, dilates_,
+          padding_l, padding_r, attr, aalgorithm, aprop_kind, aengine);
+      return super(pd);
+    });
+
+    auto pd = utils::get_pd(comp);
 
     // allocate scratchpad
     tensor scratchpad(pd.scratchpad_desc());
 
-    param = {pd, bias_attr, dst_scales, groups, scratchpad};
+    param = {comp, bias_attr, dst_scales, groups, scratchpad};
   }
 
   template <bool with_bias>
   static void do_compute(const convolution_forward_params& param,
                          const tensor& src, const tensor& weights,
                          const tensor& bias, tensor& dst) {
-    auto& pd = param.pd;
+    auto& comp = param.comp;
+    auto pd = utils::get_pd(comp);
     auto scratchpad = param.scratchpad;
     auto expected_src = src.reorder_if_differ_in(pd.src_desc());
     auto expected_weights = weights.make_grouped_weights(param.groups)
@@ -403,14 +413,14 @@ private:
     if (with_bias) {
       auto expected_bias =
           bias.reorder_if_differ_in(pd.bias_desc(), param.bias_attr);
-      super(pd).execute(stream::default_stream(), 
+      comp.execute(stream::default_stream(), 
                         {{DNNL_ARG_SRC, expected_src},
                          {DNNL_ARG_WEIGHTS, expected_weights},
                          {DNNL_ARG_BIAS, expected_bias},
                          {DNNL_ARG_DST, dst},
                          {DNNL_ARG_SCRATCHPAD, scratchpad}});
     } else {
-      super(pd).execute(stream::default_stream(), 
+      comp.execute(stream::default_stream(), 
                         {{DNNL_ARG_SRC, expected_src},
                          {DNNL_ARG_WEIGHTS, expected_weights},
                          {DNNL_ARG_DST, dst},

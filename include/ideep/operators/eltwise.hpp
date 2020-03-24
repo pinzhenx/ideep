@@ -3,7 +3,8 @@
 
 namespace ideep {
 
-struct eltwise_forward : public dnnl::eltwise_forward {
+struct eltwise_forward : public dnnl::eltwise_forward,
+                         utils::computation_cache<dnnl::eltwise_forward> {
 
   using super = dnnl::eltwise_forward;
 
@@ -22,15 +23,20 @@ struct eltwise_forward : public dnnl::eltwise_forward {
     }
     auto src_desc = src_in.get_desc();
 
-    auto pd = primitive_desc(
-        {aprop_kind, aalgorithm, src_desc, alpha, beta}, aengine);
+    auto key = utils::create_key(aprop_kind, aalgorithm, src_desc, alpha, beta);
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd = primitive_desc(
+          {aprop_kind, aalgorithm, src_desc, alpha, beta}, aengine);
+      return super(pd);
+    });
+    auto pd = utils::get_pd(comp);
 
     dst.reinit_if_possible(pd.dst_desc());
     if (src_in.has_scale()) {
       dst.set_scale(src_in.get_scale());
     }
 
-    super(pd).execute(stream::default_stream(),
+    comp.execute(stream::default_stream(),
                       {{DNNL_ARG_SRC, src_in}, {DNNL_ARG_DST, dst}});
 
     // xpz: ???

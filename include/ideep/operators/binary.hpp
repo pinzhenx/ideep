@@ -3,7 +3,8 @@
 
 namespace ideep {
 
-struct binary : public dnnl::binary {
+struct binary : public dnnl::binary,
+                utils::computation_cache<dnnl::binary> {
 
   using super = dnnl::binary;
 
@@ -16,14 +17,19 @@ struct binary : public dnnl::binary {
     auto src1_desc = src1.get_desc();
     auto dst_desc = src0_desc.to_format_any();
 
-    auto pd = primitive_desc(
-        {aalgorithm, src0_desc, src1_desc, dst_desc}, aengine);
+    auto key = utils::create_key(aalgorithm, src0_desc, src1_desc, dst_desc);
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd = primitive_desc(
+          {aalgorithm, src0_desc, src1_desc, dst_desc}, aengine);
+      return super(pd);
+    });
+    auto pd = utils::get_pd(comp);
     
     auto expected_src0 = src0.reorder_if_differ_in(pd.src0_desc());
     auto expected_src1 = src1.reorder_if_differ_in(pd.src1_desc());
     dst.reinit_if_possible(pd.dst_desc());
 
-    super(pd).execute(stream::default_stream(),
+    comp.execute(stream::default_stream(),
                       {{DNNL_ARG_SRC_0, expected_src0},
                        {DNNL_ARG_SRC_1, expected_src1},
                        {DNNL_ARG_DST, dst}});

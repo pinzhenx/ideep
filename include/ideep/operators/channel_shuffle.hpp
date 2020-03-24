@@ -3,7 +3,9 @@
 
 namespace ideep {
 
-struct channel_shuffle_forward: public dnnl::shuffle_forward {
+struct channel_shuffle_forward :
+    public dnnl::shuffle_forward,
+    utils::computation_cache<dnnl::shuffle_forward> {
 
   using super = dnnl::shuffle_forward;
 
@@ -17,13 +19,20 @@ struct channel_shuffle_forward: public dnnl::shuffle_forward {
     IDEEP_ENFORCE(src.get_data_type() == data_type::f32, "invalid data type");
 
     auto group_size = static_cast<int>(src.get_dim(axis) / group);
-    auto pd =
-        primitive_desc({aprop_kind, src.get_desc(), axis, group_size}, aengine);
+    auto src_desc = src.get_desc();
+
+    auto key = utils::create_key(aprop_kind, src_desc, axis, group_size);
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd =
+          primitive_desc({aprop_kind, src_desc, axis, group_size}, aengine);
+      return super(pd);
+    });
+    auto pd = utils::get_pd(comp);
 
     auto expected_src = src.reorder_if_differ_in(pd.src_desc());
     dst.reinit_if_possible(pd.dst_desc());
 
-    super(pd).execute(stream::default_stream(),
+    comp.execute(stream::default_stream(),
                       {{DNNL_ARG_SRC, expected_src}, {DNNL_ARG_DST, dst}});
   }
 };

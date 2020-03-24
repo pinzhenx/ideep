@@ -5,7 +5,8 @@
 namespace ideep {
 
 struct batch_normalization_forward_inference
-    : public dnnl::batch_normalization_forward {
+    : public dnnl::batch_normalization_forward,
+      utils::computation_cache<dnnl::batch_normalization_forward> {
 
   using super = dnnl::batch_normalization_forward;
 
@@ -49,8 +50,14 @@ struct batch_normalization_forward_inference
     auto src_desc = src._get_unblocked_desc_if_4c_blocked();
     // auto src_desc = src.get_desc();
 
-    auto pd = primitive_desc(
+    auto key = utils::create_key(prop_kind::forward_inference, src_desc,
+                                epsilon, flags);
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd = primitive_desc(
         {prop_kind::forward_inference, src_desc, epsilon, flags}, aengine);
+      return super(pd);
+    });
+    auto pd = utils::get_pd(comp);
 
     tensor scale_shift {pd.weights_desc()};
     auto* scale_shift_buf = static_cast<char *>(scale_shift.get_data_handle());
@@ -63,14 +70,14 @@ struct batch_normalization_forward_inference
     if (use_stats) {
       auto expected_mean = mean.reorder_if_differ_in(pd.mean_desc());
       auto expected_var = variance.reorder_if_differ_in(pd.variance_desc());
-      super(pd).execute(stream::default_stream(),
+      comp.execute(stream::default_stream(),
                         {{DNNL_ARG_SRC, expected_src},
                          {DNNL_ARG_SCALE_SHIFT, scale_shift},
                          {DNNL_ARG_VARIANCE, expected_var},
                          {DNNL_ARG_MEAN, expected_mean},
                          {DNNL_ARG_DST, dst}});
     } else {
-      super(pd).execute(stream::default_stream(),
+      comp.execute(stream::default_stream(),
                         {{DNNL_ARG_SRC, expected_src},
                          {DNNL_ARG_SCALE_SHIFT, scale_shift},
                          {DNNL_ARG_DST, dst}});

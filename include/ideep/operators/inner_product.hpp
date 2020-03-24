@@ -3,7 +3,9 @@
 
 namespace ideep {
 
-struct inner_product_forward : public dnnl::inner_product_forward {
+struct inner_product_forward :
+    public dnnl::inner_product_forward,
+    utils::computation_cache<dnnl::inner_product_forward> {
 
   using super = dnnl::inner_product_forward;
 
@@ -194,11 +196,20 @@ private:
     }
 
     tensor::desc dst_desc(dst_dims, dst_data_type, format_tag::any);
-    auto pd = with_bias
-       ? primitive_desc({aprop_kind, src_desc, weights_desc, bias_desc,
-                         dst_desc}, op_attr, aengine)
-       : primitive_desc({aprop_kind, src_desc, weights_desc, dst_desc},
-                        op_attr, aengine);
+
+    auto key = utils::create_key(aprop_kind, src_desc, weights_desc, with_bias,
+                                 op_attr); // TODO: dst_desc ?
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd = with_bias
+          ? primitive_desc({aprop_kind, src_desc, weights_desc, bias_desc,
+                            dst_desc}, op_attr, aengine)
+          : primitive_desc({aprop_kind, src_desc, weights_desc, dst_desc},
+                            op_attr, aengine);
+      return super(pd);
+    });
+    auto pd = utils::get_pd(comp);
+
+    dst.reinit_if_possible(pd.dst_desc());
 
     auto expected_src = src.reorder_if_differ_in(pd.src_desc(), src_attr);
     auto expected_weights = weights.reorder_if_differ_in(pd.weights_desc(), weights_attr);
@@ -209,13 +220,13 @@ private:
 
     if (with_bias){
       auto expected_bias = bias.reorder_if_differ_in(pd.bias_desc(), bias_attr);
-      super(pd).execute(stream::default_stream(),
+      comp.execute(stream::default_stream(),
                         {{DNNL_ARG_SRC, expected_src},
                          {DNNL_ARG_WEIGHTS, expected_weights},
                          {DNNL_ARG_BIAS, expected_bias},
                          {DNNL_ARG_DST, dst}});
     } else {
-      super(pd).execute(stream::default_stream(),
+      comp.execute(stream::default_stream(),
                         {{DNNL_ARG_SRC, expected_src},
                          {DNNL_ARG_WEIGHTS, expected_weights},
                          {DNNL_ARG_DST, dst}});

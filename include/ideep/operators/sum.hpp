@@ -3,7 +3,8 @@
 
 namespace ideep {
 
-struct sum : public dnnl::sum {
+struct sum : public dnnl::sum,
+             utils::computation_cache<dnnl::sum> {
 
   using super = dnnl::sum;
 
@@ -15,7 +16,12 @@ struct sum : public dnnl::sum {
       // "upcast" vector<tensor::desc> to vector<memory::desc>
       return static_cast<memory::desc>(t.get_desc());
     });
-    auto pd = primitive_desc(scales, src_descs, aengine);
+    auto key = utils::create_key(scales, src_descs);
+    auto comp = fetch_or_create(key, [&]() {
+      auto pd = primitive_desc(scales, src_descs, aengine);
+      return super(pd);
+    });
+    auto pd = utils::get_pd(comp);
 
     dst.reinit_if_possible(pd.dst_desc());
 
@@ -24,7 +30,7 @@ struct sum : public dnnl::sum {
       args.insert({DNNL_ARG_MULTIPLE_SRC + i, srcs[i]});
     }
 
-    super(pd).execute(stream::default_stream(), args);
+    comp.execute(stream::default_stream(), args);
   }
 };
 

@@ -344,6 +344,33 @@ class tensor : public memory {
       return desc(md);
     }
 
+    void to_bytes(utils::bytestring& bytes) const {
+      utils::to_bytes(bytes, data_type());
+      utils::to_bytes(bytes, format_kind());
+      utils::to_bytes(bytes, offset0());
+
+      auto& paddim = padded_dims();
+      auto& padoff = padded_offsets();
+
+      for (int i = 0; i < data.ndims; i++) {
+        utils::to_bytes(bytes, data.dims[i]);
+        utils::to_bytes(bytes, paddim[i]);
+        utils::to_bytes(bytes, padoff[i]);
+      }
+
+      if (is_blocking_desc()) {
+        auto& blk = blocking_desc();
+        auto& stride = blk.strides;
+        for (int i = 0; i < data.ndims; i++) {
+          utils::to_bytes(bytes, stride[i]);
+        }
+        for (int i = 0; i < blk.inner_nblks; i++) {
+          utils::to_bytes(bytes, blk.inner_idxs[i]);
+          utils::to_bytes(bytes, blk.inner_blks[i]);
+        }
+      }
+    }
+
    private:
 
     /// Returns dimension vector
@@ -945,6 +972,13 @@ class tensor : public memory {
   std::shared_ptr<void> buffer_;
   engine eng_;
 };
+
+
+namespace utils {
+inline void to_bytes(bytestring& bytes, const memory::desc& arg) {
+  tensor::desc(arg).to_bytes(bytes);
+}
+}
 
 }  // namespace ideep
 #endif
