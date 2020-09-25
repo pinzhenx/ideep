@@ -37,7 +37,7 @@ struct convolution_forward : public dnnl::convolution_forward {
       prop_kind aprop_kind = prop_kind::forward,
       const lowp_kind alowp_kind = u8s8,
       const engine& aengine = engine::cpu_engine()) {
-    do_prepare</*with_bias=*/true>(
+    do_prepare</*with_bias=*/true, /*keep_format=*/false>(
         param, src, weights, bias, dst_dims, dst, strides, dilates,
         padding_l, padding_r, groups, src_scales, weights_scales, dst_scales,
         attr, aalgorithm, aprop_kind, alowp_kind, aengine);
@@ -64,7 +64,7 @@ struct convolution_forward : public dnnl::convolution_forward {
       const lowp_kind alowp_kind = u8s8,
       const engine& aengine = engine::cpu_engine()) {
     static tensor dummy_bias;
-    do_prepare</*with_bias=*/false>(
+    do_prepare</*with_bias=*/false, /*keep_format=*/false>(
         param, src, weights, dummy_bias, dst_dims, dst, strides, dilates,
         padding_l, padding_r, groups, src_scales, weights_scales, dst_scales,
         attr, aalgorithm, aprop_kind, alowp_kind, aengine);
@@ -89,6 +89,7 @@ struct convolution_forward : public dnnl::convolution_forward {
   }
 
   // 2-in-1 compute (prepare & compute) with bias
+  template <bool keep_format = false>
   static void compute(const tensor& src,
                       const tensor& weights,
                       const tensor& bias,
@@ -108,7 +109,7 @@ struct convolution_forward : public dnnl::convolution_forward {
                       const lowp_kind alowp_kind = u8s8,
                       const engine& aengine = engine::cpu_engine()) {
     convolution_forward_params params;
-    do_prepare</*with_bias=*/true>(
+    do_prepare</*with_bias=*/true, keep_format>(
         params, src, weights, bias, dst_dims, dst, strides, dilates, 
         padding_l, padding_r, groups, src_scales, weights_scales, dst_scales,
         attr, aalgorithm, aprop_kind, alowp_kind, aengine);
@@ -116,6 +117,7 @@ struct convolution_forward : public dnnl::convolution_forward {
   }
 
   // 2-in-1 compute (prepare & compute) without bias
+  template <bool keep_format = false>
   static void compute(const tensor& src,
                       const tensor& weights,
                       const dims& dst_dims,
@@ -135,7 +137,7 @@ struct convolution_forward : public dnnl::convolution_forward {
                       const engine& aengine = engine::cpu_engine()) {
     static tensor dummy_bias;
     convolution_forward_params params;
-    do_prepare</*with_bias=*/false>(
+    do_prepare</*with_bias=*/false, keep_format>(
         params, src, weights, dummy_bias, dst_dims, dst, strides, dilates, 
         padding_l, padding_r, groups, src_scales, weights_scales, dst_scales,
         attr, aalgorithm, aprop_kind, alowp_kind, aengine);
@@ -231,7 +233,7 @@ struct convolution_forward : public dnnl::convolution_forward {
     return tensor::desc(pd.weights_desc(), groups);
   }
 
-  template <bool with_bias>
+  template <bool with_bias, bool keep_format = false>
   static primitive_desc get_primitive_desc(
       const tensor::desc& src_desc,
       const tensor::desc& weights_desc,
@@ -245,10 +247,15 @@ struct convolution_forward : public dnnl::convolution_forward {
       algorithm aalgorithm = algorithm::convolution_direct,
       prop_kind aprop_kind = prop_kind::forward,
       const engine& aengine = engine::cpu_engine()) {
-    auto src_desc_any = src_desc.to_format_any();
-    auto weights_desc_any = weights_desc.to_format_any();
-    auto bias_desc_any = with_bias ? bias_desc.to_format_any() : tensor::desc();
-    auto dst_desc_any = dst_desc.to_format_any();
+    auto src_desc_any = src_desc;
+    auto weights_desc_any = weights_desc;
+    auto bias_desc_any = with_bias ? bias_desc : tensor::desc();
+    auto dst_desc_any = dst_desc;
+    if (!keep_format) {
+      src_desc_any = src_desc_any.to_format_any();
+      weights_desc_any = weights_desc_any.to_format_any();
+      dst_desc_any = dst_desc_any.to_format_any();
+    }
 
     if (with_bias) {
       return primitive_desc({aprop_kind, aalgorithm, src_desc_any,
@@ -264,7 +271,7 @@ struct convolution_forward : public dnnl::convolution_forward {
   }
 
 private:
-  template <bool with_bias>
+  template <bool with_bias, bool keep_format>
   static void do_prepare(
       convolution_forward_params& param,
       const tensor& src,
@@ -373,8 +380,8 @@ private:
       // align weights data type with src
       dst_data_type = src.get_data_type() == data_type::bf16 ? data_type::bf16
                                                              : data_type::f32;
-      src_desc = src.get_desc().to_format_any().to_type(dst_data_type);
-      weights_desc = weights_.get_desc().to_format_any().to_type(dst_data_type);
+      src_desc = src.get_desc().to_type(dst_data_type);
+      weights_desc = weights_.get_desc().to_type(dst_data_type);
 
       if (with_bias) {
         IDEEP_ENFORCE(utils::one_of(bias.get_data_type(),
@@ -390,7 +397,7 @@ private:
                         ? dst.get_desc()
                         : tensor::desc(dst_dims, dst_data_type);
 
-    auto pd = get_primitive_desc<with_bias>(
+    auto pd = get_primitive_desc<with_bias, keep_format>(
         src_desc, weights_desc, bias_desc, dst_desc, strides, dilates_,
         padding_l, padding_r, op_attr, aalgorithm, aprop_kind, aengine);
 
