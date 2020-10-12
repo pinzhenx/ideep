@@ -105,6 +105,9 @@ struct attr_t : public dnnl::primitive_attr {
   }
 
   void to_bytes(utils::bytestring& bytes) const {
+    // encode scratchpad mode
+    utils::to_bytes(bytes, static_cast<size_t>(get_scratchpad_mode()));
+
     // encode post ops
     auto num_ops = get_post_ops().len();
     for (int i = 0; i < num_ops; i ++) {
@@ -138,6 +141,10 @@ struct attr_t : public dnnl::primitive_attr {
     auto scales = get_output_scales();
     utils::to_bytes(bytes, scales.first);
     utils::to_bytes(bytes, scales.second);
+
+    // Note: depthwise/binary post op, zero points, scales, rnn params are
+    // not encoded so far. PD cache is supposed to use in convolution only
+    // as a temporary workaround for gemm-based conv pd overhead
   }
 };
 
